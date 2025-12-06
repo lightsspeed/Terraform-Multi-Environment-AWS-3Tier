@@ -1,0 +1,97 @@
+name: Terraform Dev Environment
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - 'environments/dev/**'
+      - 'modules/**'
+      - '.github/workflows/terraform-dev.yml'
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - 'environments/dev/**'
+      - 'modules/**'
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: dev
+
+jobs:
+  terraform:
+    name: Terraform Dev
+    runs-on: ubuntu-latest
+    environment: development
+    
+    defaults:
+      run:
+        working-directory: ./environments/dev
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      
+      - name: Terraform Format
+        id: fmt
+        run: terraform fmt -check
+        continue-on-error: true
+      
+      - name: Terraform Init
+        id: init
+        run: terraform init
+      
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate
+      
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -input=false
+        continue-on-error: true
+      
+      - name: Comment PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
+            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+            
+            <details><summary>Show Plan</summary>
+            
+            \`\`\`terraform
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            
+            </details>
+            
+            *Environment: \`${{ env.ENVIRONMENT }}\`*
+            *Pusher: @${{ github.actor }}*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+      
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+        run: terraform apply -auto-approve -input=false
